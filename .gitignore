@@ -32,6 +32,7 @@
 *.app
 
 scenes/
+build/
 
 apps/apple/VulkanSplatting/shaders.h
 apps/apple/MoltenVK
