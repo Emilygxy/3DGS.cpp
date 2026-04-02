@@ -18,11 +18,14 @@ layout (std430, set = 0, binding = 2) readonly buffer SortedVertices {
 };
 
 layout (set = 1, binding = 0) uniform writeonly image2D output_image;
+layout (set = 1, binding = 1) uniform writeonly image2D output_depth;
 
 layout( push_constant ) uniform Constants
 {
     uint width;
     uint height;
+    float depth_near;
+    float depth_far;
 };
 
 layout (local_size_x = TILE_WIDTH, local_size_y = TILE_HEIGHT, local_size_z = 1) in;
@@ -45,6 +48,8 @@ void main() {
 
     float T = 1.0f;
     vec3 c = vec3(0.0f);
+    float depth_acc = 0.0f;
+    float weight_acc = 0.0f;
 
     if (gl_GlobalInvocationID.x == 10000) {
 //        debugPrintfEXT("c %f %f %f\n", attr[vertex_key].color_radii.x, attr[vertex_key].color_radii.y, attr[vertex_key].color_radii.z);
@@ -84,7 +89,10 @@ void main() {
             break;
         }
 
-        c += attr[vertex_key].color_radii.xyz * alpha * T;
+        float contribution = alpha * T;
+        c += attr[vertex_key].color_radii.xyz * contribution;
+        depth_acc += attr[vertex_key].depth * contribution;
+        weight_acc += contribution;
         T = test_T;
     }
 
@@ -95,5 +103,10 @@ void main() {
     // set pixel to red
 //    ivec2 pixel_coords = ivec2(curr_uv);
 //    imageStore(output_image, ivec2(curr_uv), vec4(1.0, 0.0, 0.0, 1.0));
+    float denom = max(depth_far - depth_near, 1e-6f);
+    float blended_depth = weight_acc > 0.0f ? (depth_acc / weight_acc) : depth_far;
+    float depth01 = clamp((blended_depth - depth_near) / denom, 0.0f, 1.0f);
+
     imageStore(output_image, ivec2(curr_uv), vec4(c, 1.0f));
+    imageStore(output_depth, ivec2(curr_uv), vec4(vec3(depth01), 1.0f));
 }

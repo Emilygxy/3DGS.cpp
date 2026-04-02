@@ -114,3 +114,29 @@ This project uses several third-party libraries. Here is a list of these librari
 - **implot**: [MIT License](https://opensource.org/licenses/MIT).
 - **glfw**: [zlib/libpng license](https://www.glfw.org/license.html).
 - **libenvpp**: [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+## Suppliments
+### 1. Depth
+**render.comp**
+render shader 现在同一遍 dispatch 同时写 color 和 depth，并且 depth 使用独立的 storage image 附件（不是复用 swapchain color）。
+#### 关键原理与公式
+当前渲染本来就是前向 alpha 合成（transmittance (T)）：
+[ w_i = \alpha_i \cdot T_i,\quad T_{i+1}=T_i(1-\alpha_i) ]
+颜色输出是： [ \mathbf{C} = \sum_i w_i \mathbf{c}_i ]
+我新增的深度图采用同样权重做“期望深度”： [ D = \frac{\sum_i w_i z_i}{\sum_i w_i} ] 其中 (z_i) 就是 preprocess.comp 写入的视空间深度 attr.depth。
+再线性归一化到 ([0,1])： [ d_{01} = \mathrm{clamp}\left(\frac{D-z_{\text{near}}}{z_{\text{far}}-z_{\text{near}}}, 0, 1\right) ]
+当像素没有命中高斯（(\sum w_i \approx 0)）时，默认用 far（背景最远）。
+
+#### 深度计算方式（当前实现）
+在 render.comp 中，深度使用和颜色一致的体渲染权重：
+- 单个高斯贡献权重：w_i = alpha_i * T_i
+- 累积深度：depth_acc += z_i * w_i
+- 累积权重：weight_acc += w_i
+- 最终深度：D = depth_acc / weight_acc（若无命中则用 far）
+- 归一化：
+  depth01 = clamp((D - near) / (far - near), 0, 1)
+- 然后按你要求写入：
+  imageStore(output_depth, ivec2(curr_uv), vec4(vec3(depth01), 1.0f));
+
+#### 输出效果
+具体参见sanpshots目录下的depth_demo.png

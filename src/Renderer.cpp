@@ -338,6 +338,7 @@ void Renderer::createTileBoundaryPipeline() {
 
 void Renderer::createRenderPipeline() {
     spdlog::debug("Creating render pipeline");
+    createDepthOutputImages();
     renderPipeline = std::make_shared<ComputePipeline>(
         context, std::make_shared<Shader>(context, "render", SPV_RENDER, SPV_RENDER_len));
     auto inputSet = std::make_shared<DescriptorSet>(context, FRAMES_IN_FLIGHT);
@@ -352,14 +353,17 @@ void Renderer::createRenderPipeline() {
     inputSet->build();
 
     auto outputSet = std::make_shared<DescriptorSet>(context, 1);
-    for (auto& image: swapchain->swapchainImages) {
+    for (size_t i = 0; i < swapchain->swapchainImages.size(); i++) {
+        auto& image = swapchain->swapchainImages[i];
         outputSet->bindImageToDescriptorSet(0, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
                                             image);
+        outputSet->bindImageToDescriptorSet(1, vk::DescriptorType::eStorageImage, vk::ShaderStageFlagBits::eCompute,
+                                            depthOutputImages[i]);
     }
     outputSet->build();
     renderPipeline->addDescriptorSet(0, inputSet);
     renderPipeline->addDescriptorSet(1, outputSet);
-    renderPipeline->addPushConstant(vk::ShaderStageFlagBits::eCompute, 0, sizeof(uint32_t) * 2);
+    renderPipeline->addPushConstant(vk::ShaderStageFlagBits::eCompute, 0, sizeof(RenderPushConstants));
     renderPipeline->build();
 }
 
@@ -655,10 +659,14 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     renderCommandBuffer->writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, context->queryPool.get(),
                                         queryManager->registerQuery("render_start"));
     auto [width, height] = swapchain->swapchainExtent;
-    uint32_t constants[2] = {width, height};
+    RenderPushConstants constants{};
+    constants.width = width;
+    constants.height = height;
+    constants.depth_near = camera.nearPlane;
+    constants.depth_far = camera.farPlane;
     renderCommandBuffer->pushConstants(renderPipeline->pipelineLayout.get(),
                                        vk::ShaderStageFlagBits::eCompute, 0,
-                                       sizeof(uint32_t) * 2, constants);
+                                       sizeof(RenderPushConstants), &constants);
 
     // image layout transition: undefined -> general
     vk::ImageMemoryBarrier imageMemoryBarrier{};
@@ -673,6 +681,19 @@ bool Renderer::recordRenderCommandBuffer(uint32_t currentFrame) {
     renderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
                                          vk::PipelineStageFlagBits::eComputeShader,
                                          vk::DependencyFlagBits::eByRegion, nullptr, nullptr, imageMemoryBarrier);
+
+    vk::ImageMemoryBarrier depthImageBarrier{};
+    depthImageBarrier.oldLayout = vk::ImageLayout::eUndefined;
+    depthImageBarrier.newLayout = vk::ImageLayout::eGeneral;
+    depthImageBarrier.image = depthOutputImages[currentImageIndex]->image;
+    depthImageBarrier.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    depthImageBarrier.srcAccessMask = vk::AccessFlagBits::eNoneKHR;
+    depthImageBarrier.dstAccessMask = vk::AccessFlagBits::eShaderWrite;
+    depthImageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    depthImageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    renderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                                         vk::PipelineStageFlagBits::eComputeShader,
+                                         vk::DependencyFlagBits::eByRegion, nullptr, nullptr, depthImageBarrier);
 
     renderCommandBuffer->dispatch((width + 15) / 16, (height + 15) / 16, 1);
 
@@ -753,5 +774,65 @@ void Renderer::updateUniforms() {
     uniformBuffer->upload(&data, sizeof(UniformBuffer), 0);
 }
 
+void Renderer::destroyDepthOutputImages() {
+    for (size_t i = 0; i < depthOutputImageAllocations.size(); i++) {
+        auto allocation = depthOutputImageAllocations[i];
+        if (allocation != VK_NULL_HANDLE) {
+            vmaDestroyImage(context->allocator,
+                            static_cast<VkImage>(depthOutputImages[i]->image),
+                            allocation);
+        }
+    }
+    depthOutputImages.clear();
+    depthOutputImageAllocations.clear();
+}
+
+void Renderer::createDepthOutputImages() {
+    destroyDepthOutputImages();
+
+    depthOutputImages.reserve(swapchain->swapchainImages.size());
+    depthOutputImageAllocations.reserve(swapchain->swapchainImages.size());
+
+    for (size_t i = 0; i < swapchain->swapchainImages.size(); i++) {
+        vk::ImageCreateInfo imageCreateInfo{};
+        imageCreateInfo.imageType = vk::ImageType::e2D;
+        imageCreateInfo.format = swapchain->swapchainFormat;
+        imageCreateInfo.extent = vk::Extent3D{swapchain->swapchainExtent.width, swapchain->swapchainExtent.height, 1};
+        imageCreateInfo.mipLevels = 1;
+        imageCreateInfo.arrayLayers = 1;
+        imageCreateInfo.samples = vk::SampleCountFlagBits::e1;
+        imageCreateInfo.tiling = vk::ImageTiling::eOptimal;
+        imageCreateInfo.usage = vk::ImageUsageFlagBits::eStorage;
+        imageCreateInfo.sharingMode = vk::SharingMode::eExclusive;
+        imageCreateInfo.initialLayout = vk::ImageLayout::eUndefined;
+
+        VmaAllocationCreateInfo allocInfo{};
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+        VkImage vkImage = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VkResult result = vmaCreateImage(context->allocator,
+                                         reinterpret_cast<const VkImageCreateInfo*>(&imageCreateInfo),
+                                         &allocInfo,
+                                         &vkImage,
+                                         &allocation,
+                                         nullptr);
+        if (result != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create depth output storage image");
+        }
+
+        auto imageView = context->device->createImageViewUnique({
+            {}, vkImage, vk::ImageViewType::e2D, swapchain->swapchainFormat,
+            {},
+            {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+        });
+
+        depthOutputImages.push_back(std::make_shared<Image>(
+            vk::Image(vkImage), std::move(imageView), swapchain->swapchainFormat, swapchain->swapchainExtent));
+        depthOutputImageAllocations.push_back(allocation);
+    }
+}
+
 Renderer::~Renderer() {
+    destroyDepthOutputImages();
 }

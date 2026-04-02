@@ -56,6 +56,13 @@ public:
         uint32_t g_num_blocks_per_workgroup; // == NUM_BLOCKS_PER_WORKGROUP
     };
 
+    struct RenderPushConstants {
+        uint32_t width;
+        uint32_t height;
+        float depth_near;
+        float depth_far;
+    };
+
     explicit Renderer(VulkanSplatting::RendererConfiguration configuration);
 
     void createGui();
@@ -113,6 +120,8 @@ private:
     std::shared_ptr<Buffer> tileBoundaryBuffer;
     std::shared_ptr<Buffer> sortVBufferEven;
     std::shared_ptr<Buffer> sortVBufferOdd;
+    std::vector<std::shared_ptr<Image>> depthOutputImages;
+    std::vector<VmaAllocation> depthOutputImageAllocations;
 
     std::shared_ptr<DescriptorSet> inputSet;
 
@@ -157,6 +166,8 @@ private:
     void createTileBoundaryPipeline();
 
     void createRenderPipeline();
+    void createDepthOutputImages();
+    void destroyDepthOutputImages();
 
     void recordPreprocessCommandBuffer();
 
