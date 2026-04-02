@@ -19,6 +19,7 @@ layout (std430, set = 0, binding = 2) readonly buffer SortedVertices {
 
 layout (set = 1, binding = 0) uniform writeonly image2D output_image;
 layout (set = 1, binding = 1) uniform writeonly image2D output_depth;
+layout (set = 1, binding = 2) uniform writeonly image2D output_normal;
 
 layout( push_constant ) uniform Constants
 {
@@ -50,6 +51,7 @@ void main() {
     vec3 c = vec3(0.0f);
     float depth_acc = 0.0f;
     float weight_acc = 0.0f;
+    vec3 normal_acc = vec3(0.0f);
 
     if (gl_GlobalInvocationID.x == 10000) {
 //        debugPrintfEXT("c %f %f %f\n", attr[vertex_key].color_radii.x, attr[vertex_key].color_radii.y, attr[vertex_key].color_radii.z);
@@ -93,6 +95,7 @@ void main() {
         c += attr[vertex_key].color_radii.xyz * contribution;
         depth_acc += attr[vertex_key].depth * contribution;
         weight_acc += contribution;
+        normal_acc += attr[vertex_key].normal.xyz * contribution;
         T = test_T;
     }
 
@@ -106,7 +109,10 @@ void main() {
     float denom = max(depth_far - depth_near, 1e-6f);
     float blended_depth = weight_acc > 0.0f ? (depth_acc / weight_acc) : depth_far;
     float depth01 = clamp((blended_depth - depth_near) / denom, 0.0f, 1.0f);
+    vec3 normal = weight_acc > 0.0f ? normalize(normal_acc) : vec3(0.0f, 0.0f, 1.0f);
+    vec3 normal01 = normal * 0.5f + 0.5f;
 
     imageStore(output_image, ivec2(curr_uv), vec4(c, 1.0f));
     imageStore(output_depth, ivec2(curr_uv), vec4(vec3(depth01), 1.0f));
+    imageStore(output_normal, ivec2(curr_uv), vec4(normal01, 1.0f));
 }

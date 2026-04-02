@@ -32,9 +32,10 @@ public:
         glm::vec4 conic_opacity;
         glm::vec4 color_radii;
         glm::uvec4 aabb;
+        glm::vec4 normal;
         glm::vec2 uv;
         float depth;
-        uint32_t __padding[1];
+        uint32_t magic;
     };
 
     struct Camera {
@@ -122,6 +123,8 @@ private:
     std::shared_ptr<Buffer> sortVBufferOdd;
     std::vector<std::shared_ptr<Image>> depthOutputImages;
     std::vector<VmaAllocation> depthOutputImageAllocations;
+    std::vector<std::shared_ptr<Image>> normalOutputImages;
+    std::vector<VmaAllocation> normalOutputImageAllocations;
 
     std::shared_ptr<DescriptorSet> inputSet;
 
@@ -168,6 +171,8 @@ private:
     void createRenderPipeline();
     void createDepthOutputImages();
     void destroyDepthOutputImages();
+    void createNormalOutputImages();
+    void destroyNormalOutputImages();
 
     void recordPreprocessCommandBuffer();
 

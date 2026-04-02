@@ -31,6 +31,24 @@ layout (std430, set = 1, binding = 2) writeonly buffer NumTilesOverlap {
 
 layout (local_size_x = TILE_WIDTH * TILE_HEIGHT, local_size_y = 1, local_size_z = 1) in;
 
+vec3 estimate_normal_view(uint index, vec3 p_view_xyz) {
+    vec3 scale = vertices[index].scale_opacity.xyz;
+    vec3 axis = vec3(0.0, 0.0, 1.0);
+    if (scale.x <= scale.y && scale.x <= scale.z) {
+        axis = vec3(1.0, 0.0, 0.0);
+    } else if (scale.y <= scale.x && scale.y <= scale.z) {
+        axis = vec3(0.0, 1.0, 0.0);
+    }
+
+    mat3 R = rotationFromQuaternion(vertices[index].rotation);
+    vec3 normal_world = normalize(transpose(R) * axis);
+    vec3 normal_view = normalize(mat3(view_mat) * normal_world);
+    if (dot(normal_view, -p_view_xyz) < 0.0) {
+        normal_view *= -1.0;
+    }
+    return normal_view;
+}
+
 mat3 get_projection_jacobian_approx(vec3 t) {
     float limx = 1.3 * tan_fovx;
     float limy = 1.3 * tan_fovy;
@@ -125,6 +143,7 @@ void main() {
 //    assert(tile_shape.x == 50 && tile_shape.y == 38, "invalid tile shape: %d %d\n", tile_shape);
 
     attr[index].color_radii.w = 0.0;
+    attr[index].normal = vec4(0.0, 0.0, 1.0, 0.0);
     tiles_overlap[index] = 0;
 
     vec4 p_hom = proj_mat * vertices[index].position;
@@ -177,6 +196,7 @@ void main() {
     attr[index].depth = p_view.z;
     attr[index].color_radii.w = radii;
     attr[index].color_radii.xyz = compute_sh();
+    attr[index].normal = vec4(estimate_normal_view(index, p_view.xyz), 0.0);
     attr[index].uv = uv;
     attr[index].magic = MAGIC;
 //    attr[index*2].magic = MAGIC;

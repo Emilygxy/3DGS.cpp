@@ -43,6 +43,7 @@ struct VertexAttribute {
     vec4 conic_opacity;
     vec4 color_radii;
     uvec4 aabb;
+    vec4 normal;
     vec2 uv;
     float depth;
     uint magic;

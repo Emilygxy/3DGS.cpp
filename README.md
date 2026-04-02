@@ -125,6 +125,7 @@ render shader 现在同一遍 dispatch 同时写 color 和 depth，并且 depth 
 颜色输出是： [ \mathbf{C} = \sum_i w_i \mathbf{c}_i ]
 我新增的深度图采用同样权重做“期望深度”： [ D = \frac{\sum_i w_i z_i}{\sum_i w_i} ] 其中 (z_i) 就是 preprocess.comp 写入的视空间深度 attr.depth。
 再线性归一化到 ([0,1])： [ d_{01} = \mathrm{clamp}\left(\frac{D-z_{\text{near}}}{z_{\text{far}}-z_{\text{near}}}, 0, 1\right) ]
+<img src="docs/images/dn.png" width="700" height="350">
 当像素没有命中高斯（(\sum w_i \approx 0)）时，默认用 far（背景最远）。
 
 #### 深度计算方式（当前实现）
@@ -140,3 +141,43 @@ render shader 现在同一遍 dispatch 同时写 color 和 depth，并且 depth 
 
 #### 输出效果
 具体参见sanpshots目录下的depth_demo.png
+
+### 2. Normal
+**原理说明**
+1. 从高斯参数估计法线（每高斯一次，preprocess 阶段）
+把高斯看成椭球，尺度为 (s_x,s_y,s_z)，旋转为 (R)。
+协方差主轴方向由旋转决定，最小尺度对应“最薄方向”，可作为法线近似：
+
+[ k=\arg\min(s_x,s_y,s_z),\quad \mathbf{e}_k\in{(1,0,0),(0,1,0),(0,0,1)} ] [ \mathbf{n}_w \approx R,\mathbf{e}_k ] 
+<img src="docs/images/E1.png" width="850" height="350">
+<img src="docs/images/E2.png" width="800" height="500">
+**注**：这套代码的旋转矩阵约定里实现用了 transpose(R)，与现有协方差构造约定保持一致。
+
+转到 view 空间并朝向相机：
+
+[ \mathbf{n}v=\mathrm{normalize}(V{3\times3}\mathbf{n}_w),\quad \text{if }\mathbf{n}_v\cdot(-\mathbf{p}_v)<0,\ \mathbf{n}_v=-\mathbf{n}_v ]
+<img src="docs/images/vn.png" width="1000" height="1000">
+
+1. 深度与法线的像素融合（render 阶段）
+每个 splat 的贡献权重与原颜色合成一致：
+
+[ w_i=\alpha_i T_i,\quad T_{i+1}=T_i(1-\alpha_i) ]
+<img src="docs/images/ronghe.png" width="700" height="150">
+
+深度（已有）：
+[ D=\frac{\sum_i w_i z_i}{\sum_i w_i},\quad d_{01}=\mathrm{clamp}\left(\frac{D-z_{near}}{z_{far}-z_{near}},0,1\right) ]
+<img src="docs/images/depth1.png" width="700" height="450">
+<img src="docs/images/depth2.png" width="700" height="320">
+
+法线（新增）：
+[ \mathbf{N}=\mathrm{normalize}\left(\sum_i w_i,\mathbf{n}{v,i}\right) ] 编码到纹理： [ \mathbf{N}{01}=0.5\cdot\mathbf{N}+0.5 ]
+![alt text](docs/images/nor1.png)
+![alt text](docs/images/nor2.png)
+
+对应输出就是我们要的附件写法（depth）+ normal 附件写入。
+
+#### 输出效果
+具体参见sanpshots目录下的nor_demo.png
+
+### 3. 更新的体渲染管线说明
+![alt text](docs/images/vRendering.png)
